@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "BetterAuthCapacitor",
+    name: "RoadmapAiBetterAuthCapacitor",
     platforms: [.iOS(.v15)],
     products: [
         .library(
-            name: "BetterAuthCapacitor",
+            name: "RoadmapAiBetterAuthCapacitor",
             targets: ["BetterAuthCapacitorPlugin"])
     ],
     dependencies: [
