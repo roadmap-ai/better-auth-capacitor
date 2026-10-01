@@ -15,6 +15,7 @@ export default defineConfig({
     'zod',
     '@capacitor/core',
     '@capacitor/preferences',
+    '@aparajita/capacitor-secure-storage',
     '@capacitor/app',
     '@capacitor/network',
   ],

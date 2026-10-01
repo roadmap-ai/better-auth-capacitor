@@ -4,7 +4,7 @@ Better Auth plugin for Capacitor/Ionic mobile apps. Provides offline-first authe
 
 ## Features
 
-- **Offline-first authentication** - Sessions are cached in `@capacitor/preferences` for offline access
+- **Offline-first authentication** - Sessions are cached in the iOS Keychain / Android Keystore (via `@aparajita/capacitor-secure-storage`) for offline access
 - **OAuth flow support** - Social login via system browser with deep link callbacks
 - **Focus/Online managers** - Automatic session refresh when app regains focus or connectivity
 - **Bearer token extraction** - Easy access to auth tokens for API requests
@@ -13,8 +13,15 @@ Better Auth plugin for Capacitor/Ionic mobile apps. Provides offline-first authe
 ## Installation
 
 ```bash
-pnpm add better-auth-capacitor @capacitor/preferences
+pnpm add better-auth-capacitor @aparajita/capacitor-secure-storage @capacitor/preferences
 ```
+
+Session cookies and cached session data are stored with `@aparajita/capacitor-secure-storage`. Notes:
+
+- On web it falls back to unencrypted `localStorage`.
+- iOS Keychain items can survive an app reinstall, so a stale session may reappear until it expires or the user signs out.
+- The plugin's key prefix (default `capacitor-storage_`) is global to the app, so calling `SecureStorage.clear()` or `setKeyPrefix()` also affects the keys used here.
+- `@capacitor/preferences` is still used by the `lastLoginMethodClient` plugin.
 
 ### Optional dependencies for OAuth
 
@@ -165,7 +172,7 @@ const response = await fetch('/api/auth/custom-login', {
 })
 const data = await response.json()
 
-// Store the token in Capacitor Preferences
+// Store the token in secure storage
 await setCapacitorAuthToken({
   token: data.session.token,
   expiresAt: data.session.expiresAt, // Optional, defaults to 7 days
@@ -338,14 +345,15 @@ else {
 
 - `better-auth` >= 1.0.0
 - `@better-auth/core` >= 1.0.0
-- `@capacitor/core` >= 6.0.0
-- `@capacitor/preferences` >= 6.0.0
+- `@capacitor/core` >= 8.0.0 < 9
+- `@aparajita/capacitor-secure-storage` >= 8.0.0 < 9
+- `@capacitor/preferences` >= 8.0.0 < 9
 
 ### Optional
 
-- `@capacitor/app` >= 6.0.0 (for OAuth deep links, focus manager)
-- `@capacitor/browser` >= 6.0.0 (for OAuth browser opening)
-- `@capacitor/network` >= 6.0.0 (for online manager)
+- `@capacitor/app` >= 8.0.0 < 9 (for OAuth deep links, focus manager)
+- `@capacitor/browser` >= 8.0.0 < 9 (for OAuth browser opening)
+- `@capacitor/network` >= 8.0.0 < 9 (for online manager)
 
 ## License
 

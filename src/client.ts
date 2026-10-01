@@ -5,6 +5,7 @@ import {
   SECURE_COOKIE_PREFIX,
   stripSecureCookiePrefix,
 } from 'better-auth/cookies'
+import * as storage from './storage'
 
 /**
  * Safe JSON parse utility
@@ -17,16 +18,6 @@ function safeJSONParse<T>(str: string): T | null {
   catch {
     return null
   }
-}
-
-// Lazy-loaded module references (cached to avoid re-importing)
-let _PreferencesMod: typeof import('@capacitor/preferences') | null = null
-
-async function getPreferencesMod() {
-  if (!_PreferencesMod) {
-    _PreferencesMod = await import('@capacitor/preferences')
-  }
-  return _PreferencesMod
 }
 
 /**
@@ -76,7 +67,7 @@ export interface SetCapacitorAuthTokenOptions {
 }
 
 /**
- * Store a session token in Capacitor Preferences storage
+ * Store a session token in secure storage (Keychain/Keystore)
  * Useful for custom auth endpoints that bypass the Better Auth client
  *
  * @example
@@ -105,11 +96,10 @@ export async function setCapacitorAuthToken(opts: SetCapacitorAuthTokenOptions):
     : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // Default: 7 days
 
   try {
-    const { Preferences } = await getPreferencesMod()
     const normalizedCookieName = normalizeCookieName(cookieName)
 
     // Get existing cookies
-    const existingCookie = (await Preferences.get({ key: normalizedCookieName }))?.value
+    const existingCookie = (await storage.getItem(normalizedCookieName))
     let cookieData: Record<string, StoredCookie> = {}
 
     if (existingCookie) {
@@ -129,10 +119,7 @@ export async function setCapacitorAuthToken(opts: SetCapacitorAuthTokenOptions):
     cookieData[baseCookieName] = { value: token, expires: expiresAt }
     cookieData[secureCookieName] = { value: token, expires: expiresAt }
 
-    await Preferences.set({
-      key: normalizedCookieName,
-      value: JSON.stringify(cookieData),
-    })
+    await storage.setItem(normalizedCookieName, JSON.stringify(cookieData))
 
     return true
   }
@@ -142,7 +129,7 @@ export async function setCapacitorAuthToken(opts: SetCapacitorAuthTokenOptions):
 }
 
 /**
- * Clear the stored session token from Capacitor Preferences
+ * Clear the stored session token from secure storage
  * Useful for custom logout flows
  */
 export async function clearCapacitorAuthToken(opts?: Pick<SetCapacitorAuthTokenOptions, 'storagePrefix'>): Promise<boolean> {
@@ -154,9 +141,8 @@ export async function clearCapacitorAuthToken(opts?: Pick<SetCapacitorAuthTokenO
   const localCacheName = `${storagePrefix}_session_data`
 
   try {
-    const { Preferences } = await getPreferencesMod()
-    await Preferences.remove({ key: normalizeCookieName(cookieName) })
-    await Preferences.remove({ key: normalizeCookieName(localCacheName) })
+    await storage.removeItem(normalizeCookieName(cookieName))
+    await storage.removeItem(normalizeCookieName(localCacheName))
     return true
   }
   catch {
@@ -165,7 +151,7 @@ export async function clearCapacitorAuthToken(opts?: Pick<SetCapacitorAuthTokenO
 }
 
 /**
- * Get the bearer token from Capacitor Preferences storage
+ * Get the bearer token from secure storage (Keychain/Keystore)
  * Useful for adding Authorization header to fetch requests in native apps
  * @returns The bearer token or null if not found/not native
  */
@@ -178,8 +164,7 @@ export async function getCapacitorAuthToken(opts?: GetCapacitorAuthTokenOptions)
   const cookieName = `${storagePrefix}_cookie`
 
   try {
-    const { Preferences } = await getPreferencesMod()
-    const storedCookie = (await Preferences.get({ key: normalizeCookieName(cookieName) }))?.value
+    const storedCookie = (await storage.getItem(normalizeCookieName(cookieName)))
 
     if (!storedCookie)
       return null
@@ -440,21 +425,19 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
          * Get stored cookie string for manual fetch requests
          */
         getCookie: async () => {
-          const { Preferences } = await getPreferencesMod()
-          const result = await Preferences.get({ key: normalizeCookieName(cookieName) })
-          return getCookie(result?.value || '{}')
+          const stored = await storage.getItem(normalizeCookieName(cookieName))
+          return getCookie(stored || '{}')
         },
 
         /**
          * Get cached session data for offline use
          */
         getCachedSession: async () => {
-          const { Preferences } = await getPreferencesMod()
-          const result = await Preferences.get({ key: normalizeCookieName(localCacheName) })
-          if (!result?.value)
+          const stored = await storage.getItem(normalizeCookieName(localCacheName))
+          if (!stored)
             return null
           try {
-            return JSON.parse(result.value)
+            return JSON.parse(stored)
           }
           catch {
             return null
@@ -465,9 +448,8 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
          * Clear all stored auth data
          */
         clearStorage: async () => {
-          const { Preferences } = await getPreferencesMod()
-          await Preferences.remove({ key: normalizeCookieName(cookieName) })
-          await Preferences.remove({ key: normalizeCookieName(localCacheName) })
+          await storage.removeItem(normalizeCookieName(cookieName))
+          await storage.removeItem(normalizeCookieName(localCacheName))
         },
       }
     },
@@ -481,14 +463,13 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
             if (!isNativePlatform())
               return
 
-            const { Preferences } = await getPreferencesMod()
             const normalizedCookieName = normalizeCookieName(cookieName)
 
             // Handle set-auth-token header (Better Auth's token response)
             const authToken = context.response.headers.get('set-auth-token')
             if (authToken) {
               const prefixStr = Array.isArray(cookiePrefix) ? cookiePrefix[0] : cookiePrefix
-              const prevCookie = (await Preferences.get({ key: normalizedCookieName }))?.value
+              const prevCookie = (await storage.getItem(normalizedCookieName))
 
               // Store token with BOTH prefixed and non-prefixed names
               // This ensures compatibility regardless of server's useSecureCookies setting
@@ -501,12 +482,12 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
               const newCookie = getSetCookie(tokenCookies, prevCookie ?? undefined)
 
               if (hasSessionCookieChanged(prevCookie ?? null, newCookie)) {
-                await Preferences.set({ key: normalizedCookieName, value: newCookie })
+                await storage.setItem(normalizedCookieName, newCookie)
                 store?.notify('$sessionSignal')
               }
               else {
                 // Still update to refresh expiry
-                await Preferences.set({ key: normalizedCookieName, value: newCookie })
+                await storage.setItem(normalizedCookieName, newCookie)
               }
             }
 
@@ -516,16 +497,16 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
               // Only process if it contains better-auth cookies
               // This prevents infinite refetching when third-party cookies are present
               if (hasBetterAuthCookies(setCookie, cookiePrefix)) {
-                const prevCookie = (await Preferences.get({ key: normalizedCookieName }))?.value
+                const prevCookie = (await storage.getItem(normalizedCookieName))
                 const toSetCookie = getSetCookie(setCookie, prevCookie ?? undefined)
 
                 if (hasSessionCookieChanged(prevCookie ?? null, toSetCookie)) {
-                  await Preferences.set({ key: normalizedCookieName, value: toSetCookie })
+                  await storage.setItem(normalizedCookieName, toSetCookie)
                   store?.notify('$sessionSignal')
                 }
                 else {
                   // Still update the storage to refresh expiry times, but don't trigger refetch
-                  await Preferences.set({ key: normalizedCookieName, value: toSetCookie })
+                  await storage.setItem(normalizedCookieName, toSetCookie)
                 }
               }
             }
@@ -536,10 +517,7 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
               && !opts?.disableCache
             ) {
               const data = context.data
-              await Preferences.set({
-                key: normalizeCookieName(localCacheName),
-                value: JSON.stringify(data),
-              })
+              await storage.setItem(normalizeCookieName(localCacheName), JSON.stringify(data))
             }
 
             // Handle OAuth redirect for social sign-in
@@ -558,7 +536,7 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
               context.data.redirect = false
               delete context.data.url
 
-              const storedCookieJson = (await Preferences.get({ key: normalizedCookieName }))?.value
+              const storedCookieJson = (await storage.getItem(normalizedCookieName))
               const oauthStateValue = getOAuthStateValue(storedCookieJson ?? null, cookiePrefix)
 
               const params = new URLSearchParams({ authorizationURL: signInURL })
@@ -579,9 +557,9 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
                 const resultUrl = new URL(result.url)
                 const cookie = resultUrl.searchParams.get('cookie')
                 if (cookie) {
-                  const prevCookie = (await Preferences.get({ key: normalizedCookieName }))?.value
+                  const prevCookie = (await storage.getItem(normalizedCookieName))
                   const toSetCookie = getSetCookie(cookie, prevCookie ?? undefined)
-                  await Preferences.set({ key: normalizedCookieName, value: toSetCookie })
+                  await storage.setItem(normalizedCookieName, toSetCookie)
                   store?.notify('$sessionSignal')
 
                   // Dispatch event so UI can react without waiting for signIn.social to resolve
@@ -603,11 +581,10 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
           }
           await initializeManagers()
 
-          const { Preferences } = await getPreferencesMod()
           const normalizedCookieName = normalizeCookieName(cookieName)
 
           // Add stored cookie to request headers
-          const storedCookie = (await Preferences.get({ key: normalizedCookieName }))?.value
+          const storedCookie = (await storage.getItem(normalizedCookieName))
 
           // Extract bearer token from stored cookies
           let bearerToken: string | null = null
@@ -660,14 +637,14 @@ export function capacitorClient(opts?: CapacitorClientOptions): BetterAuthClient
 
           // Handle sign-out: clear storage and update state immediately
           if (url.includes('/sign-out')) {
-            await Preferences.set({ key: normalizedCookieName, value: '{}' })
+            await storage.setItem(normalizedCookieName, '{}')
             store?.atoms?.session?.set({
               ...store.atoms.session.get(),
               data: null,
               error: null,
               isPending: false,
             })
-            await Preferences.set({ key: normalizeCookieName(localCacheName), value: '{}' })
+            await storage.setItem(normalizeCookieName(localCacheName), '{}')
           }
 
           return { url, options }
